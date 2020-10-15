@@ -1,0 +1,93 @@
+#!/bin/bash
+set -e
+
+##############################################################################
+##
+##  Precommit hook which runs only for staged files.
+##  
+##  Usually usedbut  not limited to code formatters.
+##  Insert your custom logic at the end of the script
+##
+##############################################################################
+
+
+# First look at the current status (for debugging)
+git status
+
+###
+#  restore MERGE HEAD
+###
+restoreMergeHead() {
+    if [[ ! -z "$MERGE_HEAD_REF" ]]; then
+        echo "Restoring merge information"
+        echo $MERGE_HEAD_REF > .git/MERGE_HEAD
+        echo $MERGE_MSG_CONTENT > .git/MERGE_MSG
+    fi
+}
+
+###
+#  Stashes local changes and reapplies them after all checks
+###
+reapplyUnstagedFiles() {
+    echo "Restoring unstaged files"
+    echo $(git stash list)
+    STASH_NUM=$(git stash list | grep $STASH_NAME | sed -E 's/stash@\{(.*)\}.*/\1/')
+
+    if [[ -n "$STASH_NUM" ]] then;
+        # don't run it with -q as it is broken in git 2.24.3 preinstalled on macOS
+        # Was fixed in 2.25
+        git stash pop stash@{$STASH_NUM}
+    fi
+
+    git status
+
+    restoreMergeHead
+}
+
+# save merge head when it exists
+if [ -f .git/MERGE_HEAD ]; then
+    echo "Detected a merge commit, saving merge information"
+    MERGE_HEAD_REF=`cat .git/MERGE_HEAD`
+    MERGE_MSG_CONTENT=`cat .git/MERGE_MSG`
+    rm .git/MERGE_HEAD
+    rm .git/MERGE_MSG
+fi
+
+# do a fake commit to save all staged files
+git commit --no-verify -F .git/COMMIT_EDITMSG && {
+    git status
+    echo "Saving unstaged files before running pre-commit checks"
+
+    # stash all unstaged files
+    STASH_NAME=pre-commit-$(date +%s)
+    git stash save --include-untracked $STASH_NAME
+
+    git status
+
+    # undo fake commit, restore staged files
+    # repo is now in the same state as the commit which is about to be made.
+    # Ready for pre-commit checks
+    git reset --soft HEAD~1
+    git status
+
+    # executes on script exit in success and error case
+    trap 'reapplyUnstagedFiles' EXIT
+} || {
+    echo "no unstaged files"
+    restoreMergeHead  
+}
+
+
+###
+#  Write your pre-commit logic here
+###
+
+echo "Running pre-commit checks"
+
+REPO_ROOT=`git rev-parse --show-toplevel`
+
+# TODO format source code
+# dartfmt -w -l 120 $REPO_ROOT/lib
+# go fmt $REPO_ROOT 
+
+git status
