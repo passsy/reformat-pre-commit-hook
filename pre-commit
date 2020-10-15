@@ -3,40 +3,35 @@ set -e
 
 ##############################################################################
 ##
-##  Precommit hook which runs only for staged files.
-##  
-##  Usually usedbut  not limited to code formatters.
+##  Precommit hook which runs against staged files.
+##
+##  Usually used but not limited to lint and code formatters.
 ##  Insert your custom logic at the end of the script
 ##
 ##############################################################################
 
 
-# First look at the current status (for debugging)
-git status
-
-###
-#  restore MERGE HEAD
-###
+## restore MERGE HEAD
 restoreMergeHead() {
-    if [[ ! -z "$MERGE_HEAD_REF" ]]; then
+    if [[ -n "$MERGE_HEAD_REF" ]]; then
         echo "Restoring merge information"
-        echo $MERGE_HEAD_REF > .git/MERGE_HEAD
-        echo $MERGE_MSG_CONTENT > .git/MERGE_MSG
+        echo "$MERGE_HEAD_REF" > .git/MERGE_HEAD
+        echo "$MERGE_MSG_CONTENT" > .git/MERGE_MSG
     fi
 }
 
 ###
 #  Stashes local changes and reapplies them after all checks
 ###
+# save staged files
 reapplyUnstagedFiles() {
     echo "Restoring unstaged files"
-    echo $(git stash list)
-    STASH_NUM=$(git stash list | grep $STASH_NAME | sed -E 's/stash@\{(.*)\}.*/\1/')
+    STASH_NUM=$(git stash list | grep "$STASH_NAME" | sed -E 's/stash@\{(.*)\}.*/\1/')
 
-    if [[ -n "$STASH_NUM" ]] then;
+    if [[ -n "$STASH_NUM" ]]; then
         # don't run it with -q as it is broken in git 2.24.3 preinstalled on macOS
         # Was fixed in 2.25
-        git stash pop stash@{$STASH_NUM}
+        git stash pop stash@\{"$STASH_NUM"\}
     fi
 
     git status
@@ -44,23 +39,28 @@ reapplyUnstagedFiles() {
     restoreMergeHead
 }
 
+git status
+
 # save merge head when it exists
 if [ -f .git/MERGE_HEAD ]; then
     echo "Detected a merge commit, saving merge information"
-    MERGE_HEAD_REF=`cat .git/MERGE_HEAD`
-    MERGE_MSG_CONTENT=`cat .git/MERGE_MSG`
+    MERGE_HEAD_REF=$(cat .git/MERGE_HEAD)
+    MERGE_MSG_CONTENT=$(cat .git/MERGE_MSG)
     rm .git/MERGE_HEAD
     rm .git/MERGE_MSG
 fi
 
 # do a fake commit to save all staged files
-git commit --no-verify -F .git/COMMIT_EDITMSG && {
+git commit --no-verify -F .git/COMMIT_EDITMSG
+
+COMMIT_STATUS=$?
+if [ $COMMIT_STATUS -eq 0 ]; then
     git status
     echo "Saving unstaged files before running pre-commit checks"
 
     # stash all unstaged files
     STASH_NAME=pre-commit-$(date +%s)
-    git stash save --include-untracked $STASH_NAME
+    git stash save --include-untracked "$STASH_NAME"
 
     git status
 
@@ -71,12 +71,11 @@ git commit --no-verify -F .git/COMMIT_EDITMSG && {
     git status
 
     # executes on script exit in success and error case
-    trap 'reapplyUnstagedFiles' EXIT
-} || {
+    trap reapplyUnstagedFiles EXIT
+else
     echo "no unstaged files"
-    restoreMergeHead  
-}
-
+    restoreMergeHead
+fi
 
 ###
 #  Write your pre-commit logic here
@@ -84,10 +83,12 @@ git commit --no-verify -F .git/COMMIT_EDITMSG && {
 
 echo "Running pre-commit checks"
 
-REPO_ROOT=`git rev-parse --show-toplevel`
-
 # TODO format source code
-# dartfmt -w -l 120 $REPO_ROOT/lib
-# go fmt $REPO_ROOT 
+# dartfmt -w -l 120 lib
+# go fmt .
+
+# TODO run lint
+# flutter analyze
+# eslint lib/**
 
 git status
